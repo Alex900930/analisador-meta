@@ -6,7 +6,7 @@ const DEFAULT_CONFIG = {
   ctrBom: 1.00,
   ctrOtimo: 2.00,
   freqMax: 2.50,
-  cpmMax: 9.00,
+  cpmMax: 35.00,
   cpcMax: 30.00,
 }
 
@@ -78,24 +78,45 @@ function analyzeAds(rows, cfg) {
     if (cpc > 0 && cpc > cfg.cpcMax) problemas.push(`Custo/conversa alto (R$${cpc.toFixed(2)})`)
     else if (cpc > 0) positivos.push(`Custo/conversa ok (R$${cpc.toFixed(2)})`)
 
+    // Regra principal: conversas dentro do custo aceitável sempre prevalece
+    const convertendoDentroDoLimite = conversas > 0 && (cpc === 0 || cpc <= cfg.cpcMax)
+
     let decisao = 'manter'
-    if (freq >= cfg.freqMax) decisao = 'pausar'
-    else if (conversas === 0 && ctr > 0 && ctr < cfg.ctrMin) decisao = 'pausar'
-    else if (problemas.length >= 2) decisao = 'pausar'
-    else if (problemas.length === 1) decisao = 'monitorar'
+    if (freq >= cfg.freqMax) {
+      decisao = 'pausar'
+    } else if (convertendoDentroDoLimite) {
+      // Está trazendo resultado dentro do custo — manter independente de CTR ou CPM
+      if (problemas.filter(p => !p.includes('CTR') && !p.includes('CPM')).length >= 2) {
+        decisao = 'monitorar'
+      } else {
+        decisao = 'manter'
+      }
+    } else if (conversas === 0 && ctr > 0 && ctr < cfg.ctrMin) {
+      decisao = 'pausar'
+    } else if (cpc > cfg.cpcMax && cpc > 0) {
+      decisao = 'pausar'
+    } else if (problemas.length >= 2) {
+      decisao = 'monitorar'
+    } else if (problemas.length === 1) {
+      decisao = 'monitorar'
+    }
 
     let justificativa = ''
     if (decisao === 'pausar') {
       if (freq >= cfg.freqMax)
         justificativa = `Frequência de ${freq.toFixed(2)} indica audiência saturada. Mesmo com resultados, o anúncio está desgastado. Pausar e renovar criativo.`
-      else if (conversas === 0)
-        justificativa = `Sem conversas iniciadas e CTR abaixo do mínimo (${ctr > 0 ? ctr.toFixed(2) + '%' : 'sem dados'}). Não está entregando resultado. Pausar e criar nova variação.`
+      else if (cpc > cfg.cpcMax)
+        justificativa = `Custo por conversa de R$${cpc.toFixed(2)} acima do limite de R$${cfg.cpcMax}. Pausar e testar novo criativo.`
       else
-        justificativa = `Múltiplos indicadores negativos: ${problemas.join(', ')}. Custo-benefício abaixo do aceitável.`
+        justificativa = `Sem conversas iniciadas e CTR abaixo do mínimo (${ctr > 0 ? ctr.toFixed(2) + '%' : 'sem dados'}). Não está entregando resultado. Pausar e criar nova variação.`
     } else if (decisao === 'monitorar') {
-      justificativa = `${positivos.join(', ')}. Ponto de atenção: ${problemas.join(', ')}. Acompanhar mais uma semana antes de decidir.`
+      justificativa = `${positivos.join(', ')}${conversas > 0 ? ` — ${conversas} conversas a R$${cpc.toFixed(2)} cada` : ''}. Ponto de atenção: ${problemas.join(', ')}. Acompanhar mais uma semana.`
     } else {
-      justificativa = `${positivos.join(', ')}${conversas > 0 ? ` — ${conversas} conversas iniciadas` : ''}. Manter rodando.`
+      if (convertendoDentroDoLimite && problemas.length > 0) {
+        justificativa = `${conversas} conversas a R$${cpc.toFixed(2)}/conversa — dentro do limite. ${problemas.join(', ')} mas resultado compensa. Manter rodando.`
+      } else {
+        justificativa = `${positivos.join(', ')}${conversas > 0 ? ` — ${conversas} conversas iniciadas` : ''}. Manter rodando.`
+      }
     }
 
     return { nome, conversas, cpc, freq, cpm, ctr, decisao, justificativa }
